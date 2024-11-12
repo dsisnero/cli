@@ -33,9 +33,9 @@ module Hanami
               out:, err:,
               config: app.config.assets,
               system_call: InteractiveSystemCall.new(out: out, err: err, exit_after: false),
-              **opts
+              **
             )
-              super(out: out, err: err, **opts)
+              super(out: out, err: err, **)
 
               @config = config
               @system_call = system_call
@@ -58,15 +58,27 @@ module Hanami
                 end
               end
 
-              pids = slices_with_assets.map { |slice| fork_child_assets_command(slice) }
+              if Process.respond_to? :fork
+                pids = slices_with_assets.map { |slice| fork_child_assets_command(slice) }
 
-              Signal.trap("INT") do
-                pids.each do |pid|
-                  Process.kill("INT", pid)
+                Signal.trap("INT") do
+                  pids.each do |pid|
+                    Process.kill("INT", pid)
+                  end
+                end
+
+                Process.waitall
+              else
+                thread_slices = []
+                slices.map { |slice| thread_slices << new_thread_assets_command(slice) }
+                thread_slices.map(&:join)
+
+                Signal.trap("INT") do
+                  thread_slices.each do |thread|
+                    Threak.kill thread
+                  end
                 end
               end
-
-              Process.waitall
             end
 
             private
@@ -88,6 +100,13 @@ module Hanami
               rescue Interrupt
                 # When this has been interrupted (by the Signal.trap handler in #call), catch the
                 # interrupt and exit cleanly, without showing the default full backtrace.
+              end
+            end
+
+            def new_thread_assets_command(slice)
+              Thread.new do
+                cmd, *args = assets_command(slice)
+                system_call.call(cmd, *args, out_prefix: "[#{slice.slice_name}] ")
               end
             end
 
